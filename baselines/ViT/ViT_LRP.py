@@ -4,7 +4,7 @@ Hacked together by / Copyright 2020 Ross Wightman
 import torch
 import torch.nn as nn
 from einops import rearrange
-from modules.layers_ours import *
+from layers_ours import *
 
 from baselines.ViT.helpers import load_pretrained
 from baselines.ViT.weight_init import trunc_normal_
