@@ -1,8 +1,13 @@
 import os
+BASE_PATH = "/content/STAR_ICLR"
+sys.path.insert(0, BASE_PATH)
+sys.path.insert(0, os.path.join(BASE_PATH, "modules"))
 from tqdm import tqdm
 import h5py
 
 import argparse
+import sys
+
 
 # Import saliency methods and models
 from misc_functions import *
