@@ -110,7 +110,6 @@ def generate_visualization(original_image, class_index=None, start_layer=None):
                 transformer_attribution += temp / len(original_image)
         i += 1
     return transformer_attribution
-
 # ====================== Custom ImageNet Dataset for Colab ======================
 class CustomImageNetDataset(Dataset):
     def __init__(self, image_dir, transform=None):
@@ -149,7 +148,7 @@ train_loader = DataLoader(test_dataset, batch_size=128, shuffle=True,
 print(f"✅ Custom DataLoader ready with {len(test_dataset)} images")
 # =====================================================================
 def genr_decision(model, train_loader, num_batches=100):
-    transformer_attribution = [torch.zeros(224, 224).cuda() for _ in range(12)]
+    transformer_attribution = [torch.zeros(224, 224) for _ in range(12)]
    
     print(f"Starting attention map generation for {num_batches} batches...")
    
@@ -158,7 +157,7 @@ def genr_decision(model, train_loader, num_batches=100):
             break
            
         try:
-            images = batch[0].cuda()           
+            images = batch[0].cuda()
             output = model(images)
             class_top5 = print_top_classes(output)
            
@@ -166,16 +165,17 @@ def genr_decision(model, train_loader, num_batches=100):
            
             for layer in range(12):
                 temp = generate_visualization(images, class_index=class_top5, start_layer=layer)
+                if isinstance(temp, torch.Tensor):
+                    temp = temp.cpu().numpy()
                 transformer_attribution[layer] += temp / num_batches
                
-            del images, output, temp
+            del images, output
             torch.cuda.empty_cache()
            
         except RuntimeError as exception:
             if "out of memory" in str(exception):
                 print("WARNING: out of memory - skipping batch")
-                if hasattr(torch.cuda, 'empty_cache'):
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 continue
             else:
                 raise exception
@@ -185,7 +185,7 @@ def genr_decision(model, train_loader, num_batches=100):
 
 # ====================== Generate Attention Maps ======================
 print("🚀 Starting final attention map generation...")
-attention_map = genr_decision(model, train_loader, num_batches=100)
+attention_map = genr_decision(model, train_loader, num_batches=50)
 
 save_dir = "/content/recordattn_base"
 os.makedirs(save_dir, exist_ok=True)
