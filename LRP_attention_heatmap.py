@@ -1,18 +1,22 @@
 #########################
 # only use it to generate attention heatmap
 ##################first step
+
 from PIL import Image
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import torch
 import requests
-#torch.cuda.set_device(2)
 import time
 import numpy as np
 import cv2
 import copy
 import sys
+import os
+from torch.utils.data import Dataset, random_split, DataLoader
+
 np.set_printoptions(threshold=sys.maxsize)
+
 # ====================== CLS2IDX (ImageNet Classes) ======================
 try:
     url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
@@ -23,6 +27,7 @@ except Exception as e:
     print(f"❌ Failed to load CLS2IDX: {e}")
     CLS2IDX = None
 # =====================================================================
+
 import math
 from baselines.ViT.ViT_LRP import deit_base_patch16_224 as vit_base
 from baselines.ViT.ViT_LRP import deit_small_patch16_224 as vit_small
@@ -44,24 +49,22 @@ model.eval()
 attribution_generator = LRP(model)
 
 def print_top_classes(predictions, **kwargs):
-    # Print Top-5 predictions
     prob = torch.softmax(predictions, dim=1)
-    class_indices = predictions.data.topk(5, dim=1)[1][0].tolist()  # Top-5 indices
-    
+    class_indices = predictions.data.topk(5, dim=1)[1][0].tolist()
+   
     print('Top 5 classes:')
-    
     max_str_len = 0
     class_names = []
-    
+   
     for cls_idx in class_indices:
         if CLS2IDX is not None:
             full_name = CLS2IDX[cls_idx]
-            class_name = full_name.split(',')[0].strip()   
+            class_name = full_name.split(',')[0].strip()
             class_names.append(class_name)
             max_str_len = max(max_str_len, len(full_name))
         else:
             class_names.append(f"Class_{cls_idx}")
-    
+   
     for i, cls_idx in enumerate(class_indices):
         if CLS2IDX is not None:
             output_string = '\t{} : {}'.format(cls_idx, class_names[i])
@@ -71,130 +74,101 @@ def print_top_classes(predictions, **kwargs):
             )
         else:
             output_string = '\t{} : Class_{}'.format(cls_idx, cls_idx)
-        
         print(output_string)
-    
+   
     return class_indices
+
 def add_visualization(original_image, class_index=None, start_layer=None):
-    transformer_attribution = attribution_generator.generate_LRP(original_image.unsqueeze(0).cuda(), method="transformer_attribution", index = class_index, start_layer=start_layer).detach()
- 
+    transformer_attribution = attribution_generator.generate_LRP(
+        original_image.unsqueeze(0).cuda(), 
+        method="transformer_attribution", 
+        index = class_index, 
+        start_layer=start_layer
+    ).detach()
+    
     transformer_attribution = transformer_attribution.reshape(1, 1, 14, 14)
-
-    transformer_attribution = torch.nn.functional.interpolate(transformer_attribution, scale_factor=16, mode='bilinear')
-
+    transformer_attribution = torch.nn.functional.interpolate(
+        transformer_attribution, scale_factor=16, mode='bilinear'
+    )
     transformer_attribution = transformer_attribution.reshape(224, 224).cuda().data.cpu().numpy()
-    transformer_attribution = (transformer_attribution - transformer_attribution.min()) / (transformer_attribution.max() - transformer_attribution.min())
+    transformer_attribution = (transformer_attribution - transformer_attribution.min()) / \
+                              (transformer_attribution.max() - transformer_attribution.min())
     return transformer_attribution
-
-def find_decisions(orderto, ratio):
-    y, i = torch.sort(orderto)
-    thre_index = int(196 * ratio)
-    thre = y[thre_index]
-    return thre
-def get_decision(thres, array):
-    decision = [[0 for i in range(14)] for i in range(14)]
-    for i in range(14):
-        for j in range(14):
-            temp = np.mean(array[i*16:(i+1)*16,j*16:(j+1)*16])
-            if temp <= thres:
-                decision[i][j] = 0
-            else:
-                decision[i][j] = 1
-    return decision
-
 
 def generate_visualization(original_image, class_index=None, start_layer=None):
-    i=0
-    print(len(original_image))
+    i = 0
+    transformer_attribution = None
     for image in original_image:
         for index in class_index:
-            temp = add_visualization(image, class_index = index, start_layer=start_layer)
-            if i==0 and index == class_index[0]:
-                transformer_attribution = temp/len(original_image)
+            temp = add_visualization(image, class_index=index, start_layer=start_layer)
+            if transformer_attribution is None:
+                transformer_attribution = temp / len(original_image)
             else:
-                transformer_attribution += temp/len(original_image)
-        i+=1
-
+                transformer_attribution += temp / len(original_image)
+        i += 1
     return transformer_attribution
 
+# ====================== Custom ImageNet Dataset for Colab ======================
+class CustomImageNetDataset(Dataset):
+    def __init__(self, image_dir, transform=None):
+        self.image_dir = image_dir
+        self.transform = transform
+        self.image_files = [f for f in os.listdir(image_dir) if f.endswith('.JPEG')]
 
-def get_thres(transformer_attribution):
+    def __len__(self):
+        return len(self.image_files)
 
-    array = np.array(transformer_attribution) 
+    def __getitem__(self, idx):
+        img_file = self.image_files[idx]
+        img_path = os.path.join(self.image_dir, img_file)
+        img = Image.open(img_path).convert('RGB')
+        label = 0  # dummy label
+        if self.transform:
+            img = self.transform(img)
+        return img, label, img_path
 
-    order = []
-    for i in range(14):
-        for j in range(14):
-            temp = np.mean(array[i*16:(i+1)*16,j*16:(j+1)*16]) 
-            for k in range(16):
-                for q in range(16):
-                    array[i*16+k,j*16+q] = temp
-            order.append(temp)
-            
-    orderto = torch.Tensor(order)
-    thres1 = find_decisions(orderto, 1-0.7)
-    thres2 = find_decisions(orderto, 1-0.7*0.7)
-    thres3 = find_decisions(orderto, 1-0.7*0.7*0.7)
-    decisions = []
-    decision1 = get_decision(thres1, array)
-    decisions.append(decision1)
-    decision2 = get_decision(thres2, array)
-    decisions.append(decision2)
-    decision3 = get_decision(thres3, array)
-    decisions.append(decision3)
-    return decisions
-    
-    
+# ====================== Data Loading ======================
+image_dir = '/content/imagenet_val'   # <<< اینجا مسیر دیتاست خودتان را بگذارید
 
-import torchvision.datasets as datasets
-import os
-import torch.nn as nn
+transform = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
-# Data loading code
-traindir = os.path.join('/home/.../datasets/imagenet', 'train')
-valdir = os.path.join('/home/.../datasets/imagenet', 'val')
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+dataset = CustomImageNetDataset(image_dir, transform=transform)
+test_dataset, _ = random_split(dataset, [10000, len(dataset) - 10000])
 
-train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-train_sampler = None
-train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=192, shuffle=True, 
-        num_workers=4, pin_memory=True, sampler=train_sampler)
+train_loader = DataLoader(test_dataset, batch_size=128, shuffle=True, 
+                         num_workers=2, pin_memory=True)
 
-
+print(f"✅ Custom DataLoader ready with {len(test_dataset)} images")
+# =====================================================================
 
 def genr_decision(model, train_loader, num_batches=100):
     transformer_attribution = [torch.zeros(224, 224).cuda() for _ in range(12)]
-    
+   
     print(f"Starting attention map generation for {num_batches} batches...")
-    
+   
     for i, (images, target) in enumerate(train_loader):
         if i >= num_batches:
             break
-            
+           
         try:
             images = images.cuda()
             output = model(images)
             class_top5 = print_top_classes(output)
-            
+           
             print(f"Batch {i+1}/{num_batches} | Shape: {images.shape}")
-            
+           
             for layer in range(12):
                 temp = generate_visualization(images, class_index=class_top5, start_layer=layer)
-                transformer_attribution[layer] += temp / num_batches   # میانگین‌گیری صحیح
-                
-            # Memory cleanup
+                transformer_attribution[layer] += temp / num_batches
+               
             del images, output, temp
             torch.cuda.empty_cache()
-            
+           
         except RuntimeError as exception:
             if "out of memory" in str(exception):
                 print("WARNING: out of memory - skipping batch")
@@ -203,31 +177,20 @@ def genr_decision(model, train_loader, num_batches=100):
                 continue
             else:
                 raise exception
-
+                
     print("✅ Attention map generation finished!")
     return transformer_attribution
-
-def generate_masked_image(img, decision):
-    tokens = copy.deepcopy(img)
-    tokens = tokens.permute(1,2,0)
-    tokens_arr = np.array(tokens.cpu())
-    for i in range(14):
-        for j in range(14):
-            if decision[i][j] == 0:
-                for k in range(16):
-                    for q in range(16):
-                        tokens_arr[i*16+k,j*16+q] = (0, 0, 0)  
-    tokens = torch.from_numpy(tokens_arr)
-    tokens = tokens.permute(2,0,1)
-    return tokens
 
 # ====================== Generate Attention Maps ======================
 print("🚀 Starting final attention map generation...")
 attention_map = genr_decision(model, train_loader, num_batches=100)
 
+save_dir = "/content/recordattn_base"
+os.makedirs(save_dir, exist_ok=True)
+
 for l in range(12):
     print(f"layer: {l}")
-    np.save(f"/home/recordattn_base/layer192_{l}.npy", 
-            attention_map[l].cpu().numpy())
+    np.save(f"{save_dir}/layer192_{l}.npy", attention_map[l].cpu().numpy())
+
 print("✅ All layers saved successfully!")
 # =====================================================================
