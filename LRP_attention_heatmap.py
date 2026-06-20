@@ -43,8 +43,11 @@ def show_cam_on_image(img, mask):
     cam = cam / np.max(cam)
     return cam
 
-# initialize ViT pretrained with DeiT
-model = vit_base(pretrained=True).cuda()
+# initialize ViT pretrained with DeiT from Google Drive
+model_path = "/content/drive/MyDrive/STAR/deit_base_patch16_224-b5f2ef4d.pth"
+
+model = vit_base(pretrained=False).cuda()
+model.load_state_dict(torch.load(model_path, map_location="cuda"))
 model.eval()
 attribution_generator = LRP(model)
 
@@ -145,18 +148,17 @@ train_loader = DataLoader(test_dataset, batch_size=128, shuffle=True,
 
 print(f"✅ Custom DataLoader ready with {len(test_dataset)} images")
 # =====================================================================
-
 def genr_decision(model, train_loader, num_batches=100):
     transformer_attribution = [torch.zeros(224, 224).cuda() for _ in range(12)]
    
     print(f"Starting attention map generation for {num_batches} batches...")
    
-    for i, (images, target) in enumerate(train_loader):
+    for i, batch in enumerate(train_loader):
         if i >= num_batches:
             break
            
         try:
-            images = images.cuda()
+            images = batch[0].cuda()           
             output = model(images)
             class_top5 = print_top_classes(output)
            
