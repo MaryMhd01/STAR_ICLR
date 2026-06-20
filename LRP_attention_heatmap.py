@@ -142,18 +142,19 @@ transform = transforms.Compose([
 dataset = CustomImageNetDataset(image_dir, transform=transform)
 test_dataset, _ = random_split(dataset, [10000, len(dataset) - 10000])
 
-train_loader = DataLoader(test_dataset, batch_size=128, shuffle=True, 
+train_loader = DataLoader(test_dataset, batch_size=32, shuffle=True, 
                          num_workers=2, pin_memory=True)
 
 print(f"✅ Custom DataLoader ready with {len(test_dataset)} images")
 # =====================================================================
-def genr_decision(model, train_loader, num_batches=100):
+def genr_decision(model, train_loader, num_batches=30):
     transformer_attribution = [torch.zeros(224, 224) for _ in range(12)]
    
     print(f"Starting attention map generation for {num_batches} batches...")
    
+    processed = 0
     for i, batch in enumerate(train_loader):
-        if i >= num_batches:
+        if processed >= num_batches:
             break
            
         try:
@@ -161,7 +162,7 @@ def genr_decision(model, train_loader, num_batches=100):
             output = model(images)
             class_top5 = print_top_classes(output)
            
-            print(f"Batch {i+1}/{num_batches} | Shape: {images.shape}")
+            print(f"Batch {i+1} | Shape: {images.shape} | Processed: {processed+1}/{num_batches}")
            
             for layer in range(12):
                 temp = generate_visualization(images, class_index=class_top5, start_layer=layer)
@@ -169,6 +170,7 @@ def genr_decision(model, train_loader, num_batches=100):
                     temp = temp.cpu().numpy()
                 transformer_attribution[layer] += temp / num_batches
                
+            processed += 1
             del images, output
             torch.cuda.empty_cache()
            
@@ -180,12 +182,12 @@ def genr_decision(model, train_loader, num_batches=100):
             else:
                 raise exception
                 
-    print("✅ Attention map generation finished!")
+    print(f"✅ Finished! {processed} batches processed successfully.")
     return transformer_attribution
 
 # ====================== Generate Attention Maps ======================
 print("🚀 Starting final attention map generation...")
-attention_map = genr_decision(model, train_loader, num_batches=50)
+attention_map = genr_decision(model, train_loader, num_batches=30)
 
 save_dir = "/content/recordattn_base"
 os.makedirs(save_dir, exist_ok=True)
