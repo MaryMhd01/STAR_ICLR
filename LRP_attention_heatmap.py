@@ -130,7 +130,7 @@ class CustomImageNetDataset(Dataset):
         return img, label, img_path
 
 # ====================== Data Loading ======================
-image_dir = '/content/imagenet_val'   # <<< اینجا مسیر دیتاست خودتان را بگذارید
+image_dir = '/content/imagenet_val'   
 
 transform = transforms.Compose([
     transforms.Resize(256),
@@ -142,7 +142,7 @@ transform = transforms.Compose([
 dataset = CustomImageNetDataset(image_dir, transform=transform)
 test_dataset, _ = random_split(dataset, [10000, len(dataset) - 10000])
 
-train_loader = DataLoader(test_dataset, batch_size=32, shuffle=True, 
+train_loader = DataLoader(test_dataset, batch_size=16, shuffle=True, 
                          num_workers=2, pin_memory=True)
 
 print(f"✅ Custom DataLoader ready with {len(test_dataset)} images")
@@ -189,7 +189,9 @@ def genr_decision(model, train_loader, num_batches=30):
 print("🚀 Starting final attention map generation...")
 attention_map = genr_decision(model, train_loader, num_batches=30)
 
-save_dir = "/content/recordattn_base"
+#save_dir = "/content/recordattn_base"
+#os.makedirs(save_dir, exist_ok=True)
+save_dir = "/content/drive/MyDrive/STAR/recordattn_base"
 os.makedirs(save_dir, exist_ok=True)
 
 for l in range(12):
