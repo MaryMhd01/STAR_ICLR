@@ -5,11 +5,24 @@ from PIL import Image
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import torch
+import requests
 #torch.cuda.set_device(2)
 import time
 import numpy as np
 import cv2
-from samples.CLS2IDX import CLS2IDX
+import copy
+import sys
+np.set_printoptions(threshold=sys.maxsize)
+# ====================== CLS2IDX (ImageNet Classes) ======================
+try:
+    url = "https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt"
+    classes = requests.get(url, timeout=10).text.strip().split("\n")
+    CLS2IDX = {i: cls for i, cls in enumerate(classes)}
+    print(f"✅ Successfully loaded {len(CLS2IDX)} ImageNet classes")
+except Exception as e:
+    print(f"❌ Failed to load CLS2IDX: {e}")
+    CLS2IDX = None
+# =====================================================================
 import math
 from baselines.ViT.ViT_LRP import deit_base_patch16_224 as vit_base
 from baselines.ViT.ViT_LRP import deit_small_patch16_224 as vit_small
@@ -30,26 +43,38 @@ model = vit_base(pretrained=True).cuda()
 model.eval()
 attribution_generator = LRP(model)
 
-def print_top_classes(predictions, **kwargs):    
-    # Print Top-10 predictions
+def print_top_classes(predictions, **kwargs):
+    # Print Top-5 predictions
     prob = torch.softmax(predictions, dim=1)
-    class_indices = predictions.data.topk(5, dim=1)[1][0].tolist()
-    max_str_len = 0
-    class_names = []
-    for cls_idx in class_indices:
-        class_names.append(CLS2IDX[cls_idx])
-        if len(CLS2IDX[cls_idx]) > max_str_len:
-            max_str_len = len(CLS2IDX[cls_idx])
+    class_indices = predictions.data.topk(5, dim=1)[1][0].tolist()  # Top-5 indices
     
     print('Top 5 classes:')
+    
+    max_str_len = 0
+    class_names = []
+    
     for cls_idx in class_indices:
-        output_string = '\t{} : {}'.format(cls_idx, CLS2IDX[cls_idx])
-        output_string += ' ' * (max_str_len - len(CLS2IDX[cls_idx])) + '\t\t'
-        output_string += 'value = {:.3f}\t prob = {:.1f}%'.format(predictions[0, cls_idx], 100 * prob[0, cls_idx])
+        if CLS2IDX is not None:
+            full_name = CLS2IDX[cls_idx]
+            class_name = full_name.split(',')[0].strip()   
+            class_names.append(class_name)
+            max_str_len = max(max_str_len, len(full_name))
+        else:
+            class_names.append(f"Class_{cls_idx}")
+    
+    for i, cls_idx in enumerate(class_indices):
+        if CLS2IDX is not None:
+            output_string = '\t{} : {}'.format(cls_idx, class_names[i])
+            output_string += ' ' * (max_str_len - len(CLS2IDX[cls_idx])) + '\t\t'
+            output_string += 'value = {:.3f}\t prob = {:.1f}%'.format(
+                predictions[0, cls_idx], 100 * prob[0, cls_idx]
+            )
+        else:
+            output_string = '\t{} : Class_{}'.format(cls_idx, cls_idx)
+        
         print(output_string)
-    # print(class_indices)
+    
     return class_indices
-
 def add_visualization(original_image, class_index=None, start_layer=None):
     transformer_attribution = attribution_generator.generate_LRP(original_image.unsqueeze(0).cuda(), method="transformer_attribution", index = class_index, start_layer=start_layer).detach()
  
@@ -146,43 +171,41 @@ train_loader = torch.utils.data.DataLoader(
 
 
 
-def genr_decision(model, train_loader):
-    decisions = [] 
-    transformer_attribution = []
-
-    forimages = []
+def genr_decision(model, train_loader, num_batches=100):
+    transformer_attribution = [torch.zeros(224, 224).cuda() for _ in range(12)]
+    
+    print(f"Starting attention map generation for {num_batches} batches...")
+    
     for i, (images, target) in enumerate(train_loader):
-        if (i+1)%100 == 0:
-            try:
-                output = model(images.cuda())
-                class_top10 = print_top_classes(output)
-            except RuntimeError as exception:
-                if "out of memory" in str(exception):
-                    print("WARNING: out of memory")
-                    if hasattr(torch.cuda, 'empty_cache'):
-                        torch.cuda.empty_cache()
-                else:
-                    raise exception
-            print(images.shape)
+        if i >= num_batches:
+            break
+            
+        try:
+            images = images.cuda()
+            output = model(images)
+            class_top5 = print_top_classes(output)
+            
+            print(f"Batch {i+1}/{num_batches} | Shape: {images.shape}")
+            
             for layer in range(12):
-                temp= generate_visualization(images, class_index = class_top10, start_layer=layer)
-                if i == 99: 
-                    transformer_attribution.append(temp)
-                else:
-                    transformer_attribution[layer] += temp
-                    transformer_attribution[layer] /= 2
-            del images
-            torch.cuda.empty_cache() 
-            time.sleep(5)
-            if i== 99:
-                break
-    del model
-    torch.cuda.empty_cache()
-    torch.cuda.empty_cache()
-    torch.cuda.empty_cache()
-    return transformer_attribution
-        
+                temp = generate_visualization(images, class_index=class_top5, start_layer=layer)
+                transformer_attribution[layer] += temp / num_batches   # میانگین‌گیری صحیح
+                
+            # Memory cleanup
+            del images, output, temp
+            torch.cuda.empty_cache()
+            
+        except RuntimeError as exception:
+            if "out of memory" in str(exception):
+                print("WARNING: out of memory - skipping batch")
+                if hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
+                continue
+            else:
+                raise exception
 
+    print("✅ Attention map generation finished!")
+    return transformer_attribution
 
 def generate_masked_image(img, decision):
     tokens = copy.deepcopy(img)
@@ -198,13 +221,13 @@ def generate_masked_image(img, decision):
     tokens = tokens.permute(2,0,1)
     return tokens
 
-attention_map = genr_decision(model, train_loader)
-
-
-import sys  
-np.set_printoptions(threshold=sys.maxsize)
+# ====================== Generate Attention Maps ======================
+print("🚀 Starting final attention map generation...")
+attention_map = genr_decision(model, train_loader, num_batches=100)
 
 for l in range(12):
-    print("layer:{}".format(l))
-    np.save("/home/recordattn_base/layer192_{}.npy".format(l), attention_map[l])
-
+    print(f"layer: {l}")
+    np.save(f"/home/recordattn_base/layer192_{l}.npy", 
+            attention_map[l].cpu().numpy())
+print("✅ All layers saved successfully!")
+# =====================================================================
