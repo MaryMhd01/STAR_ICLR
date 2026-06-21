@@ -44,7 +44,8 @@ def show_cam_on_image(img, mask):
     return cam
 
 # initialize ViT pretrained with DeiT from Google Drive
-model_path = "/content/drive/MyDrive/STAR/deit_base_patch16_224-b5f2ef4d.pth"
+
+model_path = "/content/drive/MyDrive/STAR/pretrained_models/DeiT-Tiny.pth"
 
 model = vit_base(pretrained=False).cuda()
 model.load_state_dict(torch.load(model_path, map_location="cuda"))
