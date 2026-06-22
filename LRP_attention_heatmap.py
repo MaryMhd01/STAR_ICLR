@@ -47,10 +47,11 @@ def show_cam_on_image(img, mask):
 
 model_path = "/content/drive/MyDrive/STAR/pretrained_models/DeiT-Tiny.pth"
 
-model = vit_base(pretrained=False).cuda()
+model = vit_tiny(pretrained=False).cuda()
 model.load_state_dict(torch.load(model_path, map_location="cuda"))
 model.eval()
-attribution_generator = LRP(model)
+#attribution_generator = LRP(model)
+print("✅ DeiT-Tiny model loaded successfully!")
 
 def print_top_classes(predictions, **kwargs):
     prob = torch.softmax(predictions, dim=1)
