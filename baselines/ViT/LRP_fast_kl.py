@@ -21,6 +21,25 @@ import time
 import sys 
 np.set_printoptions(threshold=sys.maxsize)
 
+def load_attn_map(base_path="/content/drive/MyDrive/STAR/recordattn_base"):
+    attn_map = []
+    for l in range(12):   
+        file_path = f"{base_path}/layer192_{l}.npy"
+        try:
+            data = np.load(file_path)
+          
+            tensor = torch.from_numpy(data).float().cuda()
+            tensor = tensor / (tensor.sum(dim=-1, keepdim=True) + 1e-8)
+            attn_map.append(tensor)
+            print(f"✓ Layer {l} loaded successfully | shape: {tensor.shape}")
+        except FileNotFoundError:
+            print(f"✗ File not found: layer192_{l}.npy")
+            raise
+    print(f"✅ All 12 attn_map files were successfully loaded.")
+    return attn_map
+
+attn_map = load_attn_map()
+
 
 def _cfg(url='', **kwargs):
     return {
@@ -439,7 +458,7 @@ class VisionTransformer(nn.Module):
         return {'pos_embed', 'cls_token'}
     
 
-    def forward(self, x, alpha, attn_map, mask, keep_rate=None):
+    def forward(self, x, alpha=0.15, attn_map=None, mask=None, keep_rate=None):
         B = x.shape[0]
         x = self.patch_embed(x)
         # print(x.shape)z
@@ -463,7 +482,7 @@ class VisionTransformer(nn.Module):
         x = self.head(x)
         #print(x.shape)
 
-        # 对于当前batch相当于使用完毕，需要初始化
+       
         mask = initmask(mask)
         return x
 
